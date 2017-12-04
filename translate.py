@@ -69,7 +69,7 @@ parser.add_argument("--lr", type=float, default=0.0002, help="initial learning r
 parser.add_argument("--beta1", type=float, default=0.5, help="momentum term of adam")
 parser.add_argument("--classic_weight", type=float, default=100.0, help="weight on L1 term for generator gradient")
 parser.add_argument("--gan_weight", type=float, default=1.0, help="weight on GAN term for generator gradient")
-
+parser.add_argument("--no_targets", type=bool, default=False, help="indicate whether or not there is a directory containing target images. Changes the output index.html")
 
 a = parser.parse_args()
 
@@ -251,7 +251,7 @@ def load_examples():
     if a.input_dir is None or not os.path.exists(a.input_dir):
         raise Exception("input_dir does not exist")
 
-    if a.input_dir_B is None:   # image pair A and B
+    if a.input_dir_B is None and not a.no_targets:   # image pair A and B (combined)
         n_images, a_paths, raw_image = load_images(a.input_dir, 'AB')
         # break apart image pair and move to range [-1, 1]
         width = tf.shape(raw_image)[1] # [height, width, channels]
@@ -259,7 +259,13 @@ def load_examples():
         b_images = preprocess(raw_image[:,width//2:,:])
         b_paths = a_paths
         print("examples count = %d (each A and B)" % n_images)
-
+    elif a.no_targets and a.mode == "test" : # for evaluation purposes when we don't have target images
+        n_a_images, a_paths, raw_a_image = load_images(a.input_dir, 'A')
+        a_images = preprocess(raw_a_image)
+        b_images = a_images #to do useless, just remove b from the pipeline
+        b_paths = a_paths
+        n_images = n_a_images
+        print("examples count = %d (A, B is empty)" % n_images)
     elif not os.path.exists(a.input_dir_B):  # images B in other directory
         raise Exception("input_dir_B does not exist")
     else:  # load A and B images
@@ -883,6 +889,10 @@ def create_CycleGAN_model(X, Y):
     global_step = tf.contrib.framework.get_or_create_global_step()
     incr_global_step = tf.assign(global_step, global_step+1)
 
+    if(a.no_targets):
+        reverse_outputs = fake_X_from_fake_Y
+    else:
+        reverse_outputs = fake_X
     return CycleGANModel(
         predict_real_X=predict_real_X,
         predict_fake_X=predict_fake_X,
@@ -899,7 +909,7 @@ def create_CycleGAN_model(X, Y):
         gen_G_grads_and_vars=gen_G_grads_and_vars,
         gen_F_grads_and_vars=gen_F_grads_and_vars,
         outputs=fake_Y,
-        reverse_outputs=fake_X,
+        reverse_outputs=reverse_outputs,
         train=tf.group(update_losses, incr_global_step, gen_G_train, gen_F_train),
         cycle_consistency_loss_classic=ema.average(cycle_consistency_loss_classic),
     )
@@ -907,8 +917,10 @@ def create_CycleGAN_model(X, Y):
 
 if a.model =="pix2pix":
     image_kinds = ["inputs", "outputs", "targets"]
-else:
+elif not a.no_targets:
     image_kinds = ["inputs", "reverse_outputs", "outputs", "targets"]
+else:
+    image_kinds = ["inputs", "reverse_outputs", "outputs"]
 
 
 def save_images(fetches, step=None):
@@ -920,8 +932,8 @@ def save_images(fetches, step=None):
     for i, in_path in enumerate(fetches["input_paths"]):
         name, _ = os.path.splitext(os.path.basename(in_path.decode("utf8")))
         fileset = {"name": name, "step": step}
-        if not a.model == 'pix2pix':
-            target_path =  fetches["target_paths"][i]
+        if not a.model == 'pix2pix' and not a.no_targets:
+            target_path = fetches["target_paths"][i]
             name2, _ = os.path.splitext(os.path.basename(target_path.decode("utf8")))
             fileset["name2"] = name2
         for kind in image_kinds:
@@ -948,8 +960,10 @@ def append_index(filesets, step=False):
             index.write("<th>step</th>")
         if a.model == 'pix2pix':
             index.write("<th>name</th><th>input</th><th>output</th><th>target</th></tr>\n")
-        else:
+        elif not a.no_targets:
             index.write("<th>name</th><th>input</th><th>reverse_output</th><th>output</th><th>target</th><th>name</th></tr>\n")
+        elif a.no_targets:
+            index.write("<th>name</th><th>input</th><th>reverse_output</th><th>output</th></tr>\n")
 
     for fileset in filesets:
         index.write("<tr>")
@@ -961,7 +975,7 @@ def append_index(filesets, step=False):
         for kind in image_kinds:
             index.write("<td><img src='images/%s'></td>" % fileset[kind])
 
-        if not a.model == 'pix2pix':
+        if not a.model == 'pix2pix' and not a.no_targets:
             index.write("<td>%s</td>" % fileset["name2"])
 
         index.write("</tr>\n")
@@ -974,7 +988,6 @@ def main():
 
     if a.seed is None:
         a.seed = random.randint(0, 2**31 - 1)
-
     tf.set_random_seed(a.seed)
     np.random.seed(a.seed)
     random.seed(a.seed)
@@ -1067,6 +1080,10 @@ def main():
             print("loading "+a.restore+" from checkpoint")
             checkpoint = tf.train.latest_checkpoint(a.checkpoint)
             restore_saver.restore(sess, checkpoint)
+            if a.no_targets:
+                for name in display_fetches.keys():
+                    if "target" in name:
+                        display_fetches.pop(name)
 
         max_steps = 2**32
         if a.max_epochs is not None:
