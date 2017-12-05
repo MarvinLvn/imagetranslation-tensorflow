@@ -69,10 +69,11 @@ parser.add_argument("--lr", type=float, default=0.0002, help="initial learning r
 parser.add_argument("--beta1", type=float, default=0.5, help="momentum term of adam")
 parser.add_argument("--classic_weight", type=float, default=100.0, help="weight on L1 term for generator gradient")
 parser.add_argument("--gan_weight", type=float, default=1.0, help="weight on GAN term for generator gradient")
-parser.add_argument("--no_targets", type=bool, default=False, help="indicate whether or not there is a directory containing target images. Changes the output index.html")
+
+parser.add_argument("--no_targets", dest="no_targets", action="store_true", help="Don't output targets in index.html")
+parser.set_defaults(no_targets=False)
 
 a = parser.parse_args()
-
 EPS = 1e-12
 CROP_SIZE = 256
 
@@ -94,7 +95,7 @@ if a.mode == "test":
 
     # load options from the checkpoint, except for
     excepted_options = {"mode", "input_dir", "input_dir_B", "image_height", "image_width",
-                        "batch_size", "output_dir", "output_filetype", "seed", "checkpoint"}
+                        "batch_size", "output_dir", "output_filetype", "seed", "checkpoint", "no_targets"}
 
     with open(os.path.join(a.checkpoint, "options.json")) as f:
         for key, val in json.loads(f.read()).items():
