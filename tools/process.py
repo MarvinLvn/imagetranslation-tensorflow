@@ -22,6 +22,7 @@ parser.add_argument("--input_dir", required=True, help="path to folder containin
 parser.add_argument("--output_dir", required=True, help="output path")
 parser.add_argument("--operation", required=True, choices=["grayscale", "resize", "blank", "combine", "edges"])
 parser.add_argument("--workers", type=int, default=1, help="number of workers")
+
 # resize
 parser.add_argument("--pad", action="store_true", help="pad instead of crop for resize operation")
 parser.add_argument("--size", type=int, default=256, help="size to use for resize operation")
