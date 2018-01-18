@@ -10,6 +10,8 @@ import json
 import glob
 import random
 import collections
+import random
+import sys
 import math
 import time
 
@@ -26,6 +28,9 @@ parser.add_argument("--output_filetype", default="png", choices=["png", "jpeg"])
 parser.add_argument("--seed", type=int)
 parser.add_argument("--checkpoint", default=None,
                     help="directory with checkpoint to resume training from or use for testing")
+parser.add_argument("--random_init", dest="random_init", action="store_true", help="Random initialization of non-specified parameters")
+parser.add_argument("--no_random_init", dest="random_init", action="store_false", help="Default initialization")
+parser.set_defaults(random_init=False)
 
 parser.add_argument("--model", required=True, choices=["pix2pix", "pix2pix2", "CycleGAN"])
 parser.add_argument("--generator", default="unet", choices=["unet", "resnet", "highwaynet", "densenet"])
@@ -74,6 +79,52 @@ parser.add_argument("--output_type", type=str, default = "", choices=["translati
                     help="Indicates the images returned in index.html.")
 
 a = parser.parse_args()
+
+
+#Random initialization mode : initialization of missing parameters
+if a.random_init is not None and a.mode == 'train':
+    print("Random initialization mode")
+    hyper_parameters = set(["--generator", "--u_depth", "--n_res_blocks", "--n_highway_units", "--n_dense_blocks",
+                        "--n_dense_layers", "--loss", "--gen_loss", "--X_loss", "--Y_loss","--max_steps",
+                        "--max_epochs","--ngf","--ndf", "--lr", "--beta1", "--classic_weight", "--gan_weight"])
+    given_parameters = set(sys.argv)
+    given_hyper_parameters = hyper_parameters.intersection(given_parameters)
+    missing_hyper_parameters = hyper_parameters.difference(given_hyper_parameters)
+
+    #To keep the same loss between X and Y
+    if("--X_loss" in missing_hyper_parameters and "--Y_loss" not in missing_hyper_parameters):
+        a.X_loss = a.Y_loss
+        missing_hyper_parameters.remove("--X_loss")
+    elif("--X_loss" not in missing_hyper_parameters and "--Y_loss" in missing_hyper_parameters):
+        a.Y_loss = a.X_loss
+        missing_hyper_parameters.remove("--Y_loss")
+
+    initializer = {
+        "--generator": lambda: ["unet", "resnet", "highwaynet", "densenet"][random.randint(0, 3)],
+        "--u_depth": lambda: random.randint(1,8),
+        "--n_res_blocks": lambda: random.randint(1, 50), #arbitrary
+        "--n_highway_units": lambda: random.randint(1, 50), #arbitrary
+        "--n_dense_blocks": lambda: random.randint(1, 30), #arbitrary
+        "--n_dense_layers": lambda: random.randint(1, 30), #arbitrary
+        "--loss": lambda: ["log", "square"][random.randint(0, 1)],
+        "--gen_loss": lambda: ["fake", "negative", "contra"][random.randint(0, 2)],
+        "--X_loss": lambda: ["hinge", "square", "softmax", "approx", "dice", "logistic"][random.randint(0, 5)], #same loss for Y
+        "--max_epochs": lambda: random.randint(500, 1500), #arbitrary
+        "--ngf": lambda: random.randint(1, 256), #arbitrary
+        "--ndf": lambda: random.randint(1, 256), #arbitrary
+        "--lr": lambda: random.uniform(10**(-5), 0.1), #arbitrary,
+        "--beta1": lambda: random.uniform(0.4, 0.8), #arbitrary
+        "--classic_weight": lambda: random.uniform(50, 200),
+        "--gan_weight": lambda: random.uniform(0.5, 10)
+    }
+
+
+    for missing in missing_hyper_parameters:
+
+        setattr(a, missing[2:], initializer.get(missing, lambda: None)())
+
+    setattr(a, "Y_loss", a.X_loss)
+
 EPS = 1e-12
 CROP_SIZE = 256
 
@@ -95,7 +146,7 @@ if a.mode == "test":
 
     # load options from the checkpoint, except for
     excepted_options = {"mode", "input_dir", "input_dir_B", "image_height", "image_width",
-                        "batch_size", "output_dir", "output_filetype", "seed", "checkpoint", "output_type"}
+                        "batch_size", "output_dir", "output_filetype", "seed", "checkpoint", "output_type", "random_init"}
 
     with open(os.path.join(a.checkpoint, "options.json")) as f:
         for key, val in json.loads(f.read()).items():
