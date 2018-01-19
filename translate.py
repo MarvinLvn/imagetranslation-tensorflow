@@ -82,7 +82,7 @@ a = parser.parse_args()
 
 
 #Random initialization mode : initialization of missing parameters
-if a.random_init is not None and a.mode == 'train':
+if a.random_init and a.mode == 'train':
     print("Random initialization mode")
     hyper_parameters = set(["--generator", "--u_depth", "--n_res_blocks", "--n_highway_units", "--n_dense_blocks",
                         "--n_dense_layers", "--loss", "--gen_loss", "--X_loss", "--Y_loss","--max_steps",
