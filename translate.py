@@ -59,7 +59,7 @@ parser.add_argument("--save_freq", type=int, default=5000, help="save model ever
 parser.add_argument("--which_direction", type=str, default="AtoB", choices=["AtoB", "BtoA"])
 parser.add_argument("--ngf", type=int, default=0, help="number of generator filters in first conv layer (default 64 for unet, 32 else)")
 parser.add_argument("--ndf", type=int, default=64, help="number of discriminator filters in first conv layer")
-parser.add_argument("--scale_size", type=int, default=286, help="scale images to this size before cropping to 256x256")
+parser.add_argument("--scale_size", type=int, default=286, help="scale images to this size before cropping to 128x128")
 parser.add_argument("--fliplr", dest="fliplr", action="store_true", help="flip images horizontally")
 parser.add_argument("--no_fliplr", dest="fliplr", action="store_false", help="don't flip images horizontally")
 parser.set_defaults(fliplr=True)
@@ -126,7 +126,7 @@ if a.random_init and a.mode == 'train':
     setattr(a, "Y_loss", a.X_loss)
 
 EPS = 1e-12
-CROP_SIZE = 256
+CROP_SIZE = 128
 
 if a.image_height is None:
     a.image_height = CROP_SIZE
