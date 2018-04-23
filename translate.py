@@ -173,7 +173,8 @@ Examples = collections.namedtuple("Examples", "input_paths, target_paths, inputs
 Examples_CycleGAN_Seg = collections.namedtuple("Examples", "X_paths, Y_paths, X_raw, X_label, Y_raw, Y_label, steps_per_epoch")
 Model = collections.namedtuple("Model", "outputs, predict_real, predict_fake, discrim_loss, discrim_grads_and_vars, gen_loss_GAN, gen_loss_classic, gen_grads_and_vars, train")
 Pix2Pix2Model = collections.namedtuple("Pix2Pix2Model", "predict_real_X, predict_fake_X, predict_real_Y, predict_fake_Y, discrim_X_loss, discrim_Y_loss, discrim_X_grads_and_vars, discrim_Y_grads_and_vars, gen_G_loss_GAN, gen_F_loss_GAN, gen_G_loss_classic, gen_F_loss_classic, gen_G_grads_and_vars, gen_F_grads_and_vars, outputs, reverse_outputs, train")
-CycleGANModel = collections.namedtuple("CycleGANModel", "predict_real_X, predict_fake_X, predict_real_Y, predict_fake_Y, discrim_X_loss, discrim_Y_loss, discrim_X_grads_and_vars, discrim_Y_grads_and_vars, gen_G_loss_GAN, gen_F_loss_GAN, segmentation_loss, forward_cycle_loss_classic, backward_cycle_loss_classic, gen_G_grads_and_vars, gen_F_grads_and_vars, outputs_segmented, outputs, reverse_outputs, train, cycle_consistency_loss_classic")
+CycleGANModelSegmentation = collections.namedtuple("CycleGANModel", "predict_real_X, predict_fake_X, predict_real_Y, predict_fake_Y, discrim_X_loss, discrim_Y_loss, discrim_X_grads_and_vars, discrim_Y_grads_and_vars, gen_G_loss_GAN, gen_F_loss_GAN, segmentation_loss, forward_cycle_loss_classic, backward_cycle_loss_classic, gen_G_grads_and_vars, gen_F_grads_and_vars, outputs_segmented, outputs, reverse_outputs, train, cycle_consistency_loss_classic")
+CycleGANModel = collections.namedtuple("CycleGANModel", "predict_real_X, predict_fake_X, predict_real_Y, predict_fake_Y, discrim_X_loss, discrim_Y_loss, discrim_X_grads_and_vars, discrim_Y_grads_and_vars, gen_G_loss_GAN, gen_F_loss_GAN, forward_cycle_loss_classic, backward_cycle_loss_classic, gen_G_grads_and_vars, gen_F_grads_and_vars, outputs, reverse_outputs, train, cycle_consistency_loss_classic")
 
 
 def preprocess(image):
@@ -662,7 +663,7 @@ def create_discriminator_for_image_pairs(discrim_inputs, discrim_targets):
     return create_discriminator(input)
 
 
-def log_loss(real, fake, force_paired_loss=False):
+def log_loss(real, fake):
     # minimizing -tf.log(x) will try to get x to 1
     # predict_real => 1
     # predict_fake => 0
@@ -672,23 +673,16 @@ def log_loss(real, fake, force_paired_loss=False):
     else:   # paired images in loss
         with tf.name_scope("log_loss_paired_images"):
             result = tf.reduce_mean(-(tf.log(real + EPS) + tf.log(1 - fake + EPS)))
-
-    if force_paired_loss:
-        with tf.name_scope("log_loss_paired_images"):
-            result = tf.reduce_mean(-(tf.log(real + EPS) + tf.log(1 - fake + EPS)))
     return result
 
 
-def square_loss(real, fake, force_paired_loss=False):
+def square_loss(real, fake):
     # minimizing tf.square(1 - x) will try to get x to 1
     # predict_real => 1
     # predict_fake => 0
     if a.model == 'CycleGAN':  # unpaired images in loss
         result = tf.reduce_mean(tf.square(real - 1)) + tf.reduce_mean(tf.square(fake))
     else:   # paired images in loss
-        result = tf.reduce_mean(tf.square(real - 1) + tf.square(fake))
-
-    if force_paired_loss:
         result = tf.reduce_mean(tf.square(real - 1) + tf.square(fake))
     return result
 
@@ -1030,7 +1024,6 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
         [seg_model, segmentation_target_loss] = create_segmentation_model(fake_Y, X_label)
         fake_Y_segmented = seg_model.outputs
         segmentation_loss = a.weight_segmentation * classic_loss(fake_Y_segmented, X_label, target_loss=segmentation_target_loss)
-
     else:
         segmentation_loss = tf.constant(0.0)
 
@@ -1117,28 +1110,50 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
     else:
         reverse_outputs = fake_X
 
-    return CycleGANModel(
-        predict_real_X=predict_real_X,
-        predict_fake_X=predict_fake_X,
-        predict_real_Y=predict_real_Y,
-        predict_fake_Y=predict_fake_Y,
-        discrim_X_loss=ema.average(discrim_X_loss),
-        discrim_Y_loss=ema.average(discrim_Y_loss),
-        discrim_X_grads_and_vars=discrim_X_grads_and_vars,
-        discrim_Y_grads_and_vars=discrim_Y_grads_and_vars,
-        gen_G_loss_GAN=ema.average(gen_G_loss_GAN),
-        gen_F_loss_GAN=ema.average(gen_F_loss_GAN),
-        segmentation_loss=ema.average(segmentation_loss),
-        forward_cycle_loss_classic=ema.average(forward_loss_classic),
-        backward_cycle_loss_classic=ema.average(backward_loss_classic),
-        gen_G_grads_and_vars=gen_G_grads_and_vars,
-        gen_F_grads_and_vars=gen_F_grads_and_vars,
-        outputs_segmented=fake_Y_segmented,
-        outputs=fake_Y,
-        reverse_outputs=reverse_outputs,
-        train=tf.group(update_losses, incr_global_step, gen_G_train, gen_F_train),
-        cycle_consistency_loss_classic=ema.average(cycle_consistency_loss_classic),
-    )
+    if a.weight_segmentation != 0.0 or a.checkpoint_segmentation is not None:
+        return CycleGANModelSegmentation(
+            predict_real_X=predict_real_X,
+            predict_fake_X=predict_fake_X,
+            predict_real_Y=predict_real_Y,
+            predict_fake_Y=predict_fake_Y,
+            discrim_X_loss=ema.average(discrim_X_loss),
+            discrim_Y_loss=ema.average(discrim_Y_loss),
+            discrim_X_grads_and_vars=discrim_X_grads_and_vars,
+            discrim_Y_grads_and_vars=discrim_Y_grads_and_vars,
+            gen_G_loss_GAN=ema.average(gen_G_loss_GAN),
+            gen_F_loss_GAN=ema.average(gen_F_loss_GAN),
+            segmentation_loss=ema.average(segmentation_loss),
+            forward_cycle_loss_classic=ema.average(forward_loss_classic),
+            backward_cycle_loss_classic=ema.average(backward_loss_classic),
+            gen_G_grads_and_vars=gen_G_grads_and_vars,
+            gen_F_grads_and_vars=gen_F_grads_and_vars,
+            outputs_segmented=fake_Y_segmented,
+            outputs=fake_Y,
+            reverse_outputs=reverse_outputs,
+            train=tf.group(update_losses, incr_global_step, gen_G_train, gen_F_train),
+            cycle_consistency_loss_classic=ema.average(cycle_consistency_loss_classic),
+        )
+    else:
+        return CycleGANModel(
+            predict_real_X=predict_real_X,
+            predict_fake_X=predict_fake_X,
+            predict_real_Y=predict_real_Y,
+            predict_fake_Y=predict_fake_Y,
+            discrim_X_loss=ema.average(discrim_X_loss),
+            discrim_Y_loss=ema.average(discrim_Y_loss),
+            discrim_X_grads_and_vars=discrim_X_grads_and_vars,
+            discrim_Y_grads_and_vars=discrim_Y_grads_and_vars,
+            gen_G_loss_GAN=ema.average(gen_G_loss_GAN),
+            gen_F_loss_GAN=ema.average(gen_F_loss_GAN),
+            forward_cycle_loss_classic=ema.average(forward_loss_classic),
+            backward_cycle_loss_classic=ema.average(backward_loss_classic),
+            gen_G_grads_and_vars=gen_G_grads_and_vars,
+            gen_F_grads_and_vars=gen_F_grads_and_vars,
+            outputs=fake_Y,
+            reverse_outputs=reverse_outputs,
+            train=tf.group(update_losses, incr_global_step, gen_G_train, gen_F_train),
+            cycle_consistency_loss_classic=ema.average(cycle_consistency_loss_classic),
+        )
 
 
 
@@ -1314,7 +1329,6 @@ def main():
 
     saver = tf.train.Saver(max_to_keep=1)
     generators = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
-    generators_name = [var.name for var in generators]
     if a.restore=="generators":
         print("restore only generators")
         restore_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='G') \
