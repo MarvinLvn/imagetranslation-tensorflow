@@ -153,8 +153,8 @@ if a.mode == "test":
 
     # load options from the checkpoint, except for
     excepted_options = {"mode", "input_dir", "input_dir_B", "image_height", "image_width",
-                        "batch_size", "output_dir", "output_filetype", "seed", "checkpoint", "output_type", "random_init",
-                        "weight_segmentation", "checkpoint_segmentation", "restore"}
+                        "batch_size", "output_dir", "output_filetype", "seed", "checkpoint", "output_type", "random_init"
+                        ,"restore"}
 
     with open(os.path.join(a.checkpoint, "options.json")) as f:
         for key, val in json.loads(f.read()).items():
@@ -742,7 +742,6 @@ def dice_coe(output, target, epsilon=1e-10):
         return tf.clip_by_value(dice, 0, 1.0-epsilon)
 
 def classic_loss(outputs, targets, target_loss):
-
     if target_loss == "hinge":
         # Absolute value loss / L1 loss
         gen_loss_classic = tf.reduce_mean(tf.abs(targets - outputs))
@@ -791,7 +790,7 @@ def classic_loss(outputs, targets, target_loss):
 
 
 def create_pix2pix_model(inputs, targets,
-                         generator_name="generator", discriminator_name="discriminator", target_classic_loss=a.Y_loss):
+                         generator_name="generator", discriminator_name="discriminator", target_classic_loss=a.Y_loss, submodel=False):
     lower_name_scope = tf.get_default_graph().get_name_scope()
     if lower_name_scope != '':
         lower_name_scope += '/'
@@ -823,51 +822,67 @@ def create_pix2pix_model(inputs, targets,
         gen_loss_classic = classic_loss(outputs, targets, target_classic_loss)
         gen_loss = gen_loss_GAN * a.gan_weight + gen_loss_classic * a.classic_weight
 
-    with tf.name_scope("train_"+discriminator_name):
-        discrim_tvars = [var for var in tf.trainable_variables() if var.name.startswith(lower_name_scope+discriminator_name)]
-        discrim_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
-        discrim_grads_and_vars = discrim_optim.compute_gradients(discrim_loss, var_list=discrim_tvars)
-        discrim_train = discrim_optim.apply_gradients(discrim_grads_and_vars)
+    if not submodel:
+        with tf.name_scope("train_"+discriminator_name):
+            discrim_tvars = [var for var in tf.trainable_variables() if var.name.startswith(lower_name_scope+discriminator_name)]
+            discrim_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
+            discrim_grads_and_vars = discrim_optim.compute_gradients(discrim_loss, var_list=discrim_tvars)
+            discrim_train = discrim_optim.apply_gradients(discrim_grads_and_vars)
 
-    with tf.name_scope("train_"+generator_name):
-        with tf.control_dependencies([discrim_train]):
+        with tf.name_scope("train_"+generator_name):
+            with tf.control_dependencies([discrim_train]):
 
-            gen_tvars = [var for var in tf.trainable_variables() if var.name.startswith(lower_name_scope+generator_name)]
-            gen_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
-            gen_grads_and_vars = gen_optim.compute_gradients(gen_loss, var_list=gen_tvars)
+                gen_tvars = [var for var in tf.trainable_variables() if var.name.startswith(lower_name_scope+generator_name)]
+                gen_optim = tf.train.AdamOptimizer(a.lr, a.beta1)
+                gen_grads_and_vars = gen_optim.compute_gradients(gen_loss, var_list=gen_tvars)
 
-            # without gradient clipping
-            gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
-            # # with gradient clipping for each variable
-            # capped_gvs = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in gen_grads_and_vars]
-            # gen_train = gen_optim.apply_gradients(capped_gvs)
-            #
-            # # TODO: gradient clipping by global norm
+                # without gradient clipping
+                gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
+                # # with gradient clipping for each variable
+                # capped_gvs = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in gen_grads_and_vars]
+                # gen_train = gen_optim.apply_gradients(capped_gvs)
+                #
+                # # TODO: gradient clipping by global norm
 
-    ema = tf.train.ExponentialMovingAverage(decay=0.99)
-    update_losses = ema.apply([discrim_loss, gen_loss_GAN, gen_loss_classic])
 
-    global_step = tf.contrib.framework.get_or_create_global_step()
-    incr_global_step = tf.assign(global_step, global_step+1)
+        ema = tf.train.ExponentialMovingAverage(decay=0.99)
+        update_losses = ema.apply([discrim_loss, gen_loss_GAN, gen_loss_classic])
+        global_step = tf.contrib.framework.get_or_create_global_step()
+        incr_global_step = tf.assign(global_step, global_step + 1)
+        discrim_loss = ema.average(discrim_loss)
+        discrim_grads_and_vars = discrim_grads_and_vars
+        gen_loss_GAN = ema.average(gen_loss_GAN)
+        gen_loss_classic = ema.average(gen_loss_classic)
+        train = tf.group(update_losses, incr_global_step, gen_train)
+    else:
+        # We don't want to create the global_step (or the ExponentialMovingAverage) now
+        # if we use this model as a submodel. (One unique global_step in a graph !)
+        discrim_grads_and_vars=None
+        gen_grads_and_vars=None
+        discrim_loss = None
+        discrim_grads_and_vars = None
+        gen_loss_GAN = None
+        gen_loss_classic = None
+        train = None
 
     return Model(
         predict_real=predict_real,
         predict_fake=predict_fake,
-        discrim_loss=ema.average(discrim_loss),
+        discrim_loss=discrim_loss,
         discrim_grads_and_vars=discrim_grads_and_vars,
-        gen_loss_GAN=ema.average(gen_loss_GAN),
-        gen_loss_classic=ema.average(gen_loss_classic),
+        gen_loss_GAN=gen_loss_GAN,
+        gen_loss_classic=gen_loss_classic,
         gen_grads_and_vars=gen_grads_and_vars,
         outputs=outputs,
-        train=tf.group(update_losses, incr_global_step, gen_train),
+        train=train,
     )
 
 
-def create_pix2pix2_model(X, Y):
+def create_pix2pix2_model(X, Y, submodel=False):
     forward_model = create_pix2pix_model(X, Y,
-                                         generator_name="G", discriminator_name="D_Y", target_classic_loss=a.Y_loss)
+                                         generator_name="G", discriminator_name="D_Y", target_classic_loss=a.Y_loss, submodel=submodel)
     reverse_model = create_pix2pix_model(Y, X,
-                                         generator_name="F", discriminator_name="D_X", target_classic_loss=a.X_loss)
+                                         generator_name="F", discriminator_name="D_X", target_classic_loss=a.X_loss, submodel=submodel)
     return Pix2Pix2Model(
         predict_real_X=reverse_model.predict_real,
         predict_fake_X=reverse_model.predict_fake,
@@ -957,11 +972,11 @@ def create_segmentation_model(fake_Y, X_label):
     # We create the model that will be loaded in the session
     with tf.variable_scope("segmentation_model"):
         if a.model == 'pix2pix':
-            seg_model = create_pix2pix_model(fake_Y, X_label)
+            seg_model = create_pix2pix_model(fake_Y, X_label, submodel=True)
         elif a.model == 'pix2pix2':
-            seg_model = create_pix2pix2_model(fake_Y, X_label)
-        elif a.model == 'CycleGAN':
-            seg_model = create_CycleGAN_model(fake_Y, X_label)
+            seg_model = create_pix2pix2_model(fake_Y, X_label, submodel=True)
+        else:
+            print("CycleGAN as submodel not implemented")
 
     # Save target loss to use the same in CycleGAN
     segmentation_target_loss = a.Y_loss
@@ -1020,12 +1035,14 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
                 else create_discriminator_for_image_pairs(fake_X, fake_Y_from_fake_X)
 
     # Add the segmentation model
-    if a.mode == "train" and a.weight_segmentation != 0.0 and a.checkpoint_segmentation is not None:
+    consider_segmentation = a.weight_segmentation != 0.0 and a.checkpoint_segmentation is not None and a.mode == "train"
+    if consider_segmentation:
         [seg_model, segmentation_target_loss] = create_segmentation_model(fake_Y, X_label)
         fake_Y_segmented = seg_model.outputs
-        segmentation_loss = a.weight_segmentation * classic_loss(fake_Y_segmented, X_label, target_loss=segmentation_target_loss)
-    else:
-        segmentation_loss = tf.constant(0.0)
+        with tf.name_scope("segmentation_loss"):
+            segmentation_loss = a.weight_segmentation * classic_loss(fake_Y_segmented, X_label,
+                                                          target_loss=segmentation_target_loss)
+
 
     # define loss for D_X and D_Y
     with tf.name_scope("loss_D_X"):
@@ -1045,7 +1062,9 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
         # predict_fake => 1
         # abs() => 0
         gen_G_loss_GAN = GAN_loss(discrim_Y_loss, predict_fake_Y, predict_real_Y)
-        gen_G_loss = gen_G_loss_GAN * a.gan_weight + cycle_consistency_loss_classic * a.classic_weight + segmentation_loss
+        gen_G_loss = gen_G_loss_GAN * a.gan_weight + cycle_consistency_loss_classic * a.classic_weight
+        if consider_segmentation:
+            gen_G_loss = gen_G_loss + segmentation_loss
 
     with tf.name_scope("loss_F"):
         # predict_fake => 1
@@ -1097,10 +1116,15 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
 
     # other variables
     ema = tf.train.ExponentialMovingAverage(decay=0.99)
-    update_losses = ema.apply([discrim_X_loss, discrim_Y_loss,
-                               gen_G_loss_GAN, gen_F_loss_GAN, segmentation_loss,
-                               forward_loss_classic, backward_loss_classic,
-                               cycle_consistency_loss_classic])
+
+    losses = [discrim_X_loss, discrim_Y_loss,
+              gen_G_loss_GAN, gen_F_loss_GAN,
+              forward_loss_classic, backward_loss_classic,
+              cycle_consistency_loss_classic]
+    if consider_segmentation:
+        losses = losses + [segmentation_loss]
+
+    update_losses = ema.apply(losses)
 
     global_step = tf.contrib.framework.get_or_create_global_step()
     incr_global_step = tf.assign(global_step, global_step+1)
@@ -1110,7 +1134,7 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
     else:
         reverse_outputs = fake_X
 
-    if a.weight_segmentation != 0.0 or a.checkpoint_segmentation is not None:
+    if a.weight_segmentation != 0.0 and a.checkpoint_segmentation is not None and a.mode == "train":
         return CycleGANModelSegmentation(
             predict_real_X=predict_real_X,
             predict_fake_X=predict_fake_X,
@@ -1171,7 +1195,7 @@ def save_images(fetches, step=None, with_Y=False):
         os.makedirs(image_dir)
 
     filesets = []
-    if a.model == "CycleGAN" and a.mode == "train" and a.weight_segmentation != 0.0:
+    if a.model == "CycleGAN" and a.weight_segmentation != 0.0 and a.mode == "train":
         enum_fetches = enumerate(fetches["X_paths"])
     else:
         enum_fetches = enumerate(fetches["input_paths"])
@@ -1179,8 +1203,8 @@ def save_images(fetches, step=None, with_Y=False):
     for i, in_path in enum_fetches:
         name, _ = os.path.splitext(os.path.basename(in_path.decode("utf8")))
         fileset = {"name": name, "step": step}
-        if a.model == "CycleGAN" :
-            if a.weight_segmentation != 0.0:
+        if a.model == "CycleGAN":
+            if a.weight_segmentation != 0.0 and a.mode == "train":
                 target_path = fetches["Y_paths"][i]
             else:
                 target_path = fetches["target_paths"][i]
@@ -1213,8 +1237,8 @@ def append_index(filesets, step=False):
             index.write("<th>name</th><th>input</th><th>output</th><th>target</th></tr>\n")
         elif a.model == "CycleGAN" and a.weight_segmentation == 0.0:
             index.write("<th>name</th><th>input</th><th>reverse_output</th><th>output</th><th>target</th><th>name</th></tr>\n")
-        elif a.model == "CycleGAN" and a.weight_segmentation != 0.0:
-            index.write("<th>name</th><th>X_raw</th><th>fake_X</th><th>fake_Y</th><th>fake_Y_seg</th><th>Y_raw</th><th>Y_label</th><th>name</th></tr>\n")
+        elif a.model == "CycleGAN" and a.weight_segmentation != 0.0 and a.mode == "train":
+            index.write("<th>name</th><th>X_raw</th><th>fake_X</th><th>fake_Y</th><th>fake_Y_seg</th><th>Y_raw</th><th>X_label</th><th>name</th></tr>\n")
         elif a.output_type == "translation_labelisation":
             index.write("<th>name</th><th>input</th><th>translation</th><th>output label</th><th>target label</th></tr>\n")
         elif a.output_type == "translation_no_targets":
@@ -1257,16 +1281,16 @@ def main():
     with open(os.path.join(a.output_dir, "options.json"), "w") as f:
         f.write(json.dumps(vars(a), sort_keys=True, indent=4))
 
-    if a.model == "CycleGAN" and a.weight_segmentation != 0.0:
+    if a.model == "CycleGAN" and a.weight_segmentation != 0.0 and a.mode == "train":
         #Case 0 : X_raw, X_label combined in the same image, in a folder.
         #         and Y_raw,Y_label combined in the same image, in a different folder.
-        #This case concerns the CycleGAN model used while considering the loss_segmention
+        #This case concerns the CycleGAN model during the training phase used while considering the loss_segmention
         #as being a member of the cycle consistency loss
         examples = load_examples_cyclegan_seg()
     else:
         #Case 1 : X and Y combined in the same image
         #Case 2 : X and Y in two different folders
-        #These cases concern pix2pix, pix2pix2, cycleGAN used without loss_segmentation
+        #These cases concern pix2pix, pix2pix2, cycleGAN training without loss_segmentation
         examples = load_examples()
 
     # inputs and targets are [batch_size, height, width, channels]
@@ -1274,13 +1298,12 @@ def main():
         model = create_pix2pix_model(examples.inputs, examples.targets)
     elif a.model == 'pix2pix2':
         model = create_pix2pix2_model(examples.inputs, examples.targets)
-    elif a.model == 'CycleGAN' and a.weight_segmentation == 0.0:
-        model = create_CycleGAN_model(examples.inputs, examples.targets)
     elif a.model == 'CycleGAN' and a.weight_segmentation != 0.0 and a.mode == "train":
         #In this case, we need both raw images and label images for each domain
         #in order to train the model
         model = create_CycleGAN_model(examples.X_raw, examples.Y_raw, examples.X_label, examples.Y_label)
-
+    elif a.model == 'CycleGAN':
+        model = create_CycleGAN_model(examples.inputs, examples.targets)
 
     # encoding images for saving
     with tf.name_scope("encode_images"):
@@ -1327,8 +1350,11 @@ def main():
     with tf.name_scope("parameter_count"):
         parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
 
-    saver = tf.train.Saver(max_to_keep=1)
-    generators = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+    all_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+    segmentation_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="segmentation_model/")
+
+    # We don't want to save or restore the segmentation variables because they won't be used during the test phase
+    saver = tf.train.Saver(all_variables)
     if a.restore=="generators":
         print("restore only generators")
         restore_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='G') \
@@ -1367,6 +1393,8 @@ def main():
             checkpoint = tf.train.latest_checkpoint(a.checkpoint)
             restore_saver.restore(sess, checkpoint)
 
+        # We only want to restore the segmentation model during the CycleGAN training
+        # Otherwise it will be contained in the checkpoint and be restored by the CycleGAN checkpoint.
         if a.mode == "train" and a.weight_segmentation != 0.0 and a.checkpoint_segmentation is not None:
             print("loading segmentation model from checkpoint")
             checkpoint_seg = tf.train.latest_checkpoint(a.checkpoint_segmentation)
