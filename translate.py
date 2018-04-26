@@ -1183,7 +1183,7 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
 
 if a.model =="pix2pix":
     image_kinds = ["inputs", "outputs", "targets"]
-elif a.model == "CycleGAN" and a.weight_segmentation != 0.0:
+elif a.model == "CycleGAN" and a.weight_segmentation != 0.0 and a.mode == "train":
     image_kinds = ["X_raw", "reverse_outputs", "outputs", "outputs_segmented", "Y_raw", "X_label"]
 else:
     image_kinds = ["inputs", "reverse_outputs", "outputs", "targets"]
