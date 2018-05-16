@@ -1035,13 +1035,13 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
                 else create_discriminator_for_image_pairs(fake_X, fake_Y_from_fake_X)
 
     # Add the segmentation model
-    consider_segmentation = a.weight_segmentation != 0.0 and a.checkpoint_segmentation is not None and a.mode == "train"
+    consider_segmentation = a.checkpoint_segmentation is not None and a.mode == "train"
     if consider_segmentation:
         [seg_model, segmentation_target_loss] = create_segmentation_model(fake_Y, X_label)
         fake_Y_segmented = seg_model.outputs
         with tf.name_scope("segmentation_loss"):
             segmentation_loss = a.weight_segmentation * classic_loss(fake_Y_segmented, X_label,
-                                                          target_loss=segmentation_target_loss)
+                                                                    target_loss=segmentation_target_loss)
 
 
     # define loss for D_X and D_Y
@@ -1134,7 +1134,7 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
     else:
         reverse_outputs = fake_X
 
-    if a.weight_segmentation != 0.0 and a.checkpoint_segmentation is not None and a.mode == "train":
+    if a.checkpoint_segmentation is not None and a.mode == "train":
         return CycleGANModelSegmentation(
             predict_real_X=predict_real_X,
             predict_fake_X=predict_fake_X,
@@ -1183,7 +1183,7 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
 
 if a.model =="pix2pix":
     image_kinds = ["inputs", "outputs", "targets"]
-elif a.model == "CycleGAN" and a.weight_segmentation != 0.0 and a.mode == "train":
+elif a.model == "CycleGAN" and a.mode == "train":
     image_kinds = ["X_raw", "reverse_outputs", "outputs", "outputs_segmented", "Y_raw", "X_label"]
 else:
     image_kinds = ["inputs", "reverse_outputs", "outputs", "targets"]
@@ -1195,7 +1195,7 @@ def save_images(fetches, step=None, with_Y=False):
         os.makedirs(image_dir)
 
     filesets = []
-    if a.model == "CycleGAN" and a.weight_segmentation != 0.0 and a.mode == "train":
+    if a.model == "CycleGAN" and a.mode == "train":
         enum_fetches = enumerate(fetches["X_paths"])
     else:
         enum_fetches = enumerate(fetches["input_paths"])
@@ -1204,7 +1204,7 @@ def save_images(fetches, step=None, with_Y=False):
         name, _ = os.path.splitext(os.path.basename(in_path.decode("utf8")))
         fileset = {"name": name, "step": step}
         if a.model == "CycleGAN":
-            if a.weight_segmentation != 0.0 and a.mode == "train":
+            if a.checkpoint_segmentation is not None and a.mode == "train":
                 target_path = fetches["Y_paths"][i]
             else:
                 target_path = fetches["target_paths"][i]
@@ -1235,10 +1235,10 @@ def append_index(filesets, step=False):
             index.write("<th>step</th>")
         if a.model == 'pix2pix':
             index.write("<th>name</th><th>input</th><th>output</th><th>target</th></tr>\n")
-        elif a.model == "CycleGAN" and a.weight_segmentation == 0.0:
-            index.write("<th>name</th><th>input</th><th>reverse_output</th><th>output</th><th>target</th><th>name</th></tr>\n")
-        elif a.model == "CycleGAN" and a.weight_segmentation != 0.0 and a.mode == "train":
+        elif a.model == "CycleGAN" and a.checkpoint_segmentation is not None and a.mode == "train":
             index.write("<th>name</th><th>X_raw</th><th>fake_X</th><th>fake_Y</th><th>fake_Y_seg</th><th>Y_raw</th><th>X_label</th><th>name</th></tr>\n")
+        elif a.model == "CycleGAN":
+            index.write("<th>name</th><th>input</th><th>reverse_output</th><th>output</th><th>target</th><th>name</th></tr>\n")
         elif a.output_type == "translation_labelisation":
             index.write("<th>name</th><th>input</th><th>translation</th><th>output label</th><th>target label</th></tr>\n")
         elif a.output_type == "translation_no_targets":
@@ -1281,7 +1281,7 @@ def main():
     with open(os.path.join(a.output_dir, "options.json"), "w") as f:
         f.write(json.dumps(vars(a), sort_keys=True, indent=4))
 
-    if a.model == "CycleGAN" and a.weight_segmentation != 0.0 and a.mode == "train":
+    if a.model == "CycleGAN" and a.checkpoint_segmentation is not None and a.mode == "train":
         #Case 0 : X_raw, X_label combined in the same image, in a folder.
         #         and Y_raw,Y_label combined in the same image, in a different folder.
         #This case concerns the CycleGAN model during the training phase used while considering the loss_segmention
@@ -1298,7 +1298,7 @@ def main():
         model = create_pix2pix_model(examples.inputs, examples.targets)
     elif a.model == 'pix2pix2':
         model = create_pix2pix2_model(examples.inputs, examples.targets)
-    elif a.model == 'CycleGAN' and a.weight_segmentation != 0.0 and a.mode == "train":
+    elif a.model == 'CycleGAN' and a.checkpoint_segmentation is not None and a.mode == "train":
         #In this case, we need both raw images and label images for each domain
         #in order to train the model
         model = create_CycleGAN_model(examples.X_raw, examples.Y_raw, examples.X_label, examples.Y_label)
@@ -1373,7 +1373,7 @@ def main():
     else:
         restore_saver = saver
 
-    if a.mode == "train" and a.weight_segmentation != 0.0 and a.checkpoint_segmentation is not None:
+    if a.mode == "train" and a.checkpoint_segmentation is not None:
         restore_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="segmentation_model/generator/")
 
         restore_variables_keys = [x.name
@@ -1395,7 +1395,7 @@ def main():
 
         # We only want to restore the segmentation model during the CycleGAN training
         # Otherwise it will be contained in the checkpoint and be restored by the CycleGAN checkpoint.
-        if a.mode == "train" and a.weight_segmentation != 0.0 and a.checkpoint_segmentation is not None:
+        if a.mode == "train" and a.checkpoint_segmentation is not None:
             print("loading segmentation model from checkpoint")
             checkpoint_seg = tf.train.latest_checkpoint(a.checkpoint_segmentation)
             saver_segmentation_model.restore(sess, checkpoint_seg)
@@ -1454,7 +1454,7 @@ def main():
 
                 if should(a.display_freq):
                     print("saving display images")
-                    if a.model == "CycleGAN" and a.weight_segmentation != 0.0:
+                    if a.model == "CycleGAN" and a.checkpoint_segmentation is not None:
                         filesets = save_images(results["display"], step=results["global_step"], with_Y=True)
                     else:
                         filesets = save_images(results["display"], step=results["global_step"])
