@@ -1183,7 +1183,7 @@ def create_CycleGAN_model(X, Y, X_label=None, Y_label=None):
 
 if a.model =="pix2pix":
     image_kinds = ["inputs", "outputs", "targets"]
-elif a.model == "CycleGAN" and a.mode == "train":
+elif a.model == "CycleGAN" and a.mode == "train" and a.checkpoint_segmentation is not None:
     image_kinds = ["X_raw", "reverse_outputs", "outputs", "outputs_segmented", "Y_raw", "X_label"]
 else:
     image_kinds = ["inputs", "reverse_outputs", "outputs", "targets"]
@@ -1195,7 +1195,7 @@ def save_images(fetches, step=None, with_Y=False):
         os.makedirs(image_dir)
 
     filesets = []
-    if a.model == "CycleGAN" and a.mode == "train":
+    if a.model == "CycleGAN" and a.mode == "train" and a.checkpoint_segmentation is not None:
         enum_fetches = enumerate(fetches["X_paths"])
     else:
         enum_fetches = enumerate(fetches["input_paths"])
