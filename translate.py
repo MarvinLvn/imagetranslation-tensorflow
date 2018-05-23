@@ -133,7 +133,7 @@ if a.random_init and a.mode == 'train':
     setattr(a, "Y_loss", a.X_loss)
 
 EPS = 1e-12
-CROP_SIZE = 128
+CROP_SIZE = 256
 
 if a.image_height is None:
     a.image_height = CROP_SIZE
